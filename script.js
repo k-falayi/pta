@@ -1,6 +1,6 @@
 mapboxgl.accessToken = "pk.eyJ1Ijoid2hybyIsImEiOiJjbWE1cW4wbHAwaWs2Mm1xNHkzbjRtNnRoIn0.JKlYa0vasylBTfhCoNMoAg";
 
-const GEOJSON_URL = "school_geo.geojson";
+const GEOJSON_URL = "data/school_geo.geojson";
 
 const PEOPLE_PER_DOT = 100;
 

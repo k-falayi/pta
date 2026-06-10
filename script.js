@@ -2,17 +2,6 @@ mapboxgl.accessToken = "pk.eyJ1Ijoid2hybyIsImEiOiJjbWE1cW4wbHAwaWs2Mm1xNHkzbjRtN
 
 const GEOJSON_URL = "data/school_geo.geojson";
 
-const PEOPLE_PER_DOT = 100;
-
-const raceColumns = [
-  { key: "White only %", label: "White only", color: "#f4d35e" },
-  { key: "Black alone %", label: "Black alone", color: "#0d3b66" },
-  { key: "AIAN alone %", label: "AIAN alone", color: "#9d4edd" },
-  { key: "Asian alone %", label: "Asian alone", color: "#2a9d8f" },
-  { key: "Pac Islander alone %", label: "Pacific Islander alone", color: "#f77f00" },
-  { key: "some other races %", label: "Some other races", color: "#d62828" }
-];
-
 const incomeColors = [
   "#f7e7c1",
   "#e8c47b",
@@ -23,14 +12,20 @@ const incomeColors = [
 
 const ptaColors = {
   YES: "#1f9d55",
-  NO: "#c0392b"
+  NO: "#c0392b",
+  INACTIVE: "#737578"
+};
+
+const majorityColors = {
+  WHITE: "#fc8d59",
+  BLACK: "#5ab4ac"
 };
 
 const map = new mapboxgl.Map({
   container: "map",
   style: "mapbox://styles/mapbox/light-v11",
-  center: [-78.6569, 37.4316],
-  zoom: 6.1
+  center: [-77.436, 37.5407],
+  zoom: 11
 });
 
 map.addControl(new mapboxgl.NavigationControl(), "top-right");
@@ -40,7 +35,6 @@ map.on("load", async () => {
   const tracts = await response.json();
 
   const schoolPoints = createSchoolPoints(tracts);
-  const dotDensityPoints = createDotDensityPoints(tracts);
 
   map.addSource("tracts", {
     type: "geojson",
@@ -52,14 +46,9 @@ map.on("load", async () => {
     data: schoolPoints
   });
 
-  map.addSource("race-dots", {
-    type: "geojson",
-    data: dotDensityPoints
-  });
-
   addIncomeLayers();
+  addMajorityLayer();
   addSchoolLayers();
-  addDotDensityLayers();
 
   fitToData(tracts);
   setupTabs();
@@ -79,13 +68,24 @@ function addIncomeLayers() {
     source: "tracts",
     paint: {
       "fill-color": [
-        "step",
-        ["to-number", ["get", "Median household income"]],
+        "case",
+
+        ["<", ["to-number", ["get", "Median household income"]], 40000],
         incomeColors[0],
-        40000, incomeColors[1],
-        60000, incomeColors[2],
-        80000, incomeColors[3],
-        100000, incomeColors[4]
+
+        ["<", ["to-number", ["get", "Median household income"]], 60000],
+        incomeColors[1],
+
+        ["<", ["to-number", ["get", "Median household income"]], 80000],
+        incomeColors[2],
+
+        ["<", ["to-number", ["get", "Median household income"]], 100000],
+        incomeColors[3],
+
+        [">=", ["to-number", ["get", "Median household income"]], 100000],
+        incomeColors[4],
+
+        "#cccccc"
       ],
       "fill-opacity": 0.72
     }
@@ -101,6 +101,30 @@ function addIncomeLayers() {
       "line-opacity": 0.8
     }
   });
+}
+
+function addMajorityLayer() {
+  map.addLayer(
+    {
+      id: "majority-fill",
+      type: "fill",
+      source: "tracts",
+      layout: {
+        visibility: "none"
+      },
+      paint: {
+        "fill-color": [
+          "match",
+          ["upcase", ["to-string", ["get", "Majority"]]],
+          "WHITE", majorityColors.WHITE,
+          "BLACK", majorityColors.BLACK,
+          "#cccccc"
+        ],
+        "fill-opacity": 0.72
+      }
+    },
+    "tract-outline"
+  );
 }
 
 function addSchoolLayers() {
@@ -119,37 +143,15 @@ function addSchoolLayers() {
       ],
       "circle-color": [
         "match",
-        ["upcase", ["to-string", ["get", "PTA"]]],
+        ["get", "pta_clean"],
         "YES", ptaColors.YES,
         "NO", ptaColors.NO,
+        "INACTIVE", ptaColors.INACTIVE,
         "#777777"
       ],
       "circle-stroke-color": "#ffffff",
       "circle-stroke-width": 1.4,
       "circle-opacity": 0.95
-    }
-  });
-}
-
-function addDotDensityLayers() {
-  map.addLayer({
-    id: "race-dots",
-    type: "circle",
-    source: "race-dots",
-    layout: {
-      visibility: "none"
-    },
-    paint: {
-      "circle-radius": [
-        "interpolate",
-        ["linear"],
-        ["zoom"],
-        6, 1.2,
-        10, 2.2,
-        13, 3.2
-      ],
-      "circle-color": ["get", "color"],
-      "circle-opacity": 0.72
     }
   });
 }
@@ -170,7 +172,7 @@ function setupTabs() {
       if (button.dataset.view === "schools") {
         showSchoolsView();
       } else {
-        showDensityView();
+        showMajorityView();
       }
     });
   });
@@ -178,9 +180,8 @@ function setupTabs() {
 
 function showSchoolsView() {
   map.setLayoutProperty("school-points", "visibility", "visible");
-  map.setLayoutProperty("race-dots", "visibility", "none");
-
-  map.setPaintProperty("income-fill", "fill-opacity", 0.72);
+  map.setLayoutProperty("income-fill", "visibility", "visible");
+  map.setLayoutProperty("majority-fill", "visibility", "none");
 
   document.querySelector(".subtitle").textContent =
     "Census tracts are shaded by median household income. School markers are colored by PTA status.";
@@ -188,16 +189,15 @@ function showSchoolsView() {
   renderSchoolLegend();
 }
 
-function showDensityView() {
-  map.setLayoutProperty("school-points", "visibility", "none");
-  map.setLayoutProperty("race-dots", "visibility", "visible");
-
-  map.setPaintProperty("income-fill", "fill-opacity", 0.16);
+function showMajorityView() {
+  map.setLayoutProperty("school-points", "visibility", "visible");
+  map.setLayoutProperty("income-fill", "visibility", "none");
+  map.setLayoutProperty("majority-fill", "visibility", "visible");
 
   document.querySelector(".subtitle").textContent =
-    `Each dot represents about ${PEOPLE_PER_DOT.toLocaleString()} residents. Dots are randomly distributed within each census tract.`;
+    "Census tracts are colored by the racial group that makes up the largest share of the tract population. School markers are colored by PTA status.";
 
-  renderDotDensityLegend();
+  renderMajorityLegend();
 }
 
 /* ------------------------------------------------------------------
@@ -207,10 +207,12 @@ function showDensityView() {
 function createSchoolPoints(geojson) {
   const features = geojson.features
     .map((feature, index) => {
-      const lat = toNumber(feature.properties["Geocodio Latitude"]);
-      const lon = toNumber(feature.properties["Geocodio Longitude"]);
+      const lat = toNumber(feature.properties["Latitude"]);
+      const lon = toNumber(feature.properties["Longitude"]);
 
       if (lat === null || lon === null) return null;
+
+      const ptaClean = cleanPTAStatus(feature.properties["PTA Status"]);
 
       return {
         type: "Feature",
@@ -220,7 +222,8 @@ function createSchoolPoints(geojson) {
         },
         properties: {
           ...feature.properties,
-          school_id: index
+          school_id: index,
+          pta_clean: ptaClean
         }
       };
     })
@@ -232,71 +235,16 @@ function createSchoolPoints(geojson) {
   };
 }
 
-function createDotDensityPoints(geojson) {
-  const dots = [];
+function cleanPTAStatus(value) {
+  if (!value) return "UNKNOWN";
 
-  geojson.features.forEach((tract, tractIndex) => {
-    const population = toNumber(tract.properties["Census Tract pop"]);
+  const status = String(value).trim().toUpperCase();
 
-    if (!population || population <= 0) return;
+  if (status === "YES") return "YES";
+  if (status === "NO") return "NO";
+  if (status === "INACTIVE") return "INACTIVE";
 
-    raceColumns.forEach(group => {
-      const percent = normalizePercent(tract.properties[group.key]);
-      const groupPopulation = population * percent;
-      const dotCount = Math.round(groupPopulation / PEOPLE_PER_DOT);
-
-      for (let i = 0; i < dotCount; i++) {
-        const point = randomPointInsidePolygon(tract);
-
-        if (!point) continue;
-
-        dots.push({
-          type: "Feature",
-          geometry: point.geometry,
-          properties: {
-            tract_id: tractIndex,
-            race_group: group.label,
-            color: group.color,
-            people_represented: PEOPLE_PER_DOT
-          }
-        });
-      }
-    });
-  });
-
-  return {
-    type: "FeatureCollection",
-    features: dots
-  };
-}
-
-function randomPointInsidePolygon(polygonFeature) {
-  const bbox = turf.bbox(polygonFeature);
-  let attempts = 0;
-
-  while (attempts < 80) {
-    const randomPoint = turf.randomPoint(1, { bbox }).features[0];
-
-    if (turf.booleanPointInPolygon(randomPoint, polygonFeature)) {
-      return randomPoint;
-    }
-
-    attempts++;
-  }
-
-  return turf.pointOnFeature(polygonFeature);
-}
-
-function normalizePercent(value) {
-  const number = toNumber(value);
-
-  if (!number) return 0;
-
-  if (number > 1) {
-    return number / 100;
-  }
-
-  return number;
+  return "UNKNOWN";
 }
 
 function toNumber(value) {
@@ -324,6 +272,45 @@ function setupPopups() {
     closeOnClick: false
   });
 
+  map.on("mouseenter", "income-fill", e => {
+    map.getCanvas().style.cursor = "pointer";
+
+    const props = e.features[0].properties;
+
+    popup
+      .setLngLat(e.lngLat)
+      .setHTML(`
+        <strong>${props.name || "Census tract"}</strong><br>
+        Median household income: ${formatMoney(props["Median household income"])}
+      `)
+      .addTo(map);
+  });
+
+  map.on("mouseleave", "income-fill", () => {
+    map.getCanvas().style.cursor = "";
+    popup.remove();
+  });
+
+  map.on("mouseenter", "majority-fill", e => {
+    map.getCanvas().style.cursor = "pointer";
+
+    const props = e.features[0].properties;
+
+    popup
+      .setLngLat(e.lngLat)
+      .setHTML(`
+        <strong>${props.name || "Census tract"}</strong><br>
+        Majority group: ${props.Majority || "Unknown"}<br>
+        Median household income: ${formatMoney(props["Median household income"])}
+      `)
+      .addTo(map);
+  });
+
+  map.on("mouseleave", "majority-fill", () => {
+    map.getCanvas().style.cursor = "";
+    popup.remove();
+  });
+
   map.on("mouseenter", "school-points", e => {
     map.getCanvas().style.cursor = "pointer";
 
@@ -332,35 +319,17 @@ function setupPopups() {
     popup
       .setLngLat(e.lngLat)
       .setHTML(`
-        <strong>${props.School || "School"}</strong><br>
+        <strong>${props["School Name"] || "School"}</strong><br>
         ${props.Address || "Address unavailable"}<br>
-        PTA: ${props.PTA || "Unknown"}<br>
+        PTA: ${props["PTA Status"] || "Unknown"}<br>
+        Majority group: ${props.Majority || "Unknown"}<br>
         Median household income: ${formatMoney(props["Median household income"])}<br>
-        Census tract population: ${formatNumber(props["Census Tract pop"])}
+        Census tract population: ${formatNumber(props["Total Population"])}
       `)
       .addTo(map);
   });
 
   map.on("mouseleave", "school-points", () => {
-    map.getCanvas().style.cursor = "";
-    popup.remove();
-  });
-
-  map.on("mouseenter", "race-dots", e => {
-    map.getCanvas().style.cursor = "pointer";
-
-    const props = e.features[0].properties;
-
-    popup
-      .setLngLat(e.lngLat)
-      .setHTML(`
-        <strong>${props.race_group}</strong><br>
-        One dot ≈ ${formatNumber(props.people_represented)} people
-      `)
-      .addTo(map);
-  });
-
-  map.on("mouseleave", "race-dots", () => {
     map.getCanvas().style.cursor = "";
     popup.remove();
   });
@@ -376,34 +345,60 @@ function renderSchoolLegend() {
   legend.innerHTML = `
     <h3>Median household income</h3>
     ${incomeLegendRows()}
+
     <h3 style="margin-top:16px;">PTA status</h3>
+
     <div class="legend-row">
       <span class="legend-dot" style="background:${ptaColors.YES}"></span>
-      <span>Has PTA</span>
+      <span>Has active PTA</span>
     </div>
+
     <div class="legend-row">
       <span class="legend-dot" style="background:${ptaColors.NO}"></span>
       <span>No PTA</span>
     </div>
+
+    <div class="legend-row">
+      <span class="legend-dot" style="background:${ptaColors.INACTIVE}"></span>
+      <span>Has inactive PTA</span>
+    </div>
   `;
 }
 
-function renderDotDensityLegend() {
+function renderMajorityLegend() {
   const legend = document.getElementById("legend");
 
   legend.innerHTML = `
-    <h3>Dot density</h3>
+    <h3>Majority group</h3>
+
     <div class="legend-row">
-      <span>1 dot ≈ ${PEOPLE_PER_DOT.toLocaleString()} people</span>
+      <span class="legend-swatch" style="background:${majorityColors.WHITE}"></span>
+      <span>White</span>
     </div>
-    ${raceColumns.map(group => `
-      <div class="legend-row">
-        <span class="legend-dot" style="background:${group.color}"></span>
-        <span>${group.label}</span>
-      </div>
-    `).join("")}
-    <h3 style="margin-top:16px;">Income layer</h3>
-    ${incomeLegendRows()}
+
+    <div class="legend-row">
+      <span class="legend-swatch" style="background:${majorityColors.BLACK}"></span>
+      <span>Black</span>
+    </div>
+
+    
+
+    <h3 style="margin-top:16px;">PTA status</h3>
+
+    <div class="legend-row">
+      <span class="legend-dot" style="background:${ptaColors.YES}"></span>
+      <span>Has active PTA</span>
+    </div>
+
+    <div class="legend-row">
+      <span class="legend-dot" style="background:${ptaColors.NO}"></span>
+      <span>No PTA</span>
+    </div>
+
+    <div class="legend-row">
+      <span class="legend-dot" style="background:${ptaColors.INACTIVE}"></span>
+      <span>Has inactive PTA</span>
+    </div>
   `;
 }
 
